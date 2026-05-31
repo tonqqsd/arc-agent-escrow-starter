@@ -4,10 +4,16 @@ import { ARC_TESTNET, requireArcTestnet } from "../src/arc.js";
 
 const { ethers, networkName } = await network.create();
 
+function localDate() {
+  const now = new Date();
+  const timezoneOffsetMs = now.getTimezoneOffset() * 60_000;
+  return new Date(now.getTime() - timezoneOffsetMs).toISOString().slice(0, 10);
+}
+
 async function updateDeploymentLog(address: string, txHash: string | undefined, deployer: string) {
   const docsPath = new URL("../docs/deployment.md", import.meta.url);
   let content = await readFile(docsPath, "utf8");
-  const date = new Date().toISOString().slice(0, 10);
+  const date = localDate();
   const txValue = txHash ? `[${txHash}](${ARC_TESTNET.explorerUrl}/tx/${txHash})` : "not available";
 
   content = content

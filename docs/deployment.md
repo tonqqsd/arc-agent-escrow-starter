@@ -12,9 +12,9 @@ Use this file to record testnet evidence after deployment.
 ## Contract
 
 - Contract: `ArcAgentEscrow`
-- Address: pending Arc Testnet deployment
-- Deploy transaction: pending Arc Testnet deployment
-- Deployer: pending local `.env` `PRIVATE_KEY`
+- Address: `0x7a8Ea241ccdf697Dfb6598B11ccD455356689a21`
+- Deploy transaction: [0x8125ac35f2a2a4cf751798bb8007df40d04b7ee55ba5932f0fe44d8550c45260](https://testnet.arcscan.app/tx/0x8125ac35f2a2a4cf751798bb8007df40d04b7ee55ba5932f0fe44d8550c45260)
+- Deployer: `0x8d184c1e06676b90a3a128A6EDc6789b8fAfDd86`
 - Date: 2026-06-01
 
 ## Demo Jobs
@@ -27,4 +27,4 @@ Use this file to record testnet evidence after deployment.
 
 - GitHub repo: https://github.com/tonqqsd/arc-agent-escrow-starter
 - Arc community link:
-- Notes: Deployment is ready to run after a fresh Arc Testnet-only deployer private key is written to local `.env` and funded from the faucet.
+- Notes: `ArcAgentEscrow` is deployed on Arc Testnet. Local `.env` has been updated with `ESCROW_ADDRESS` for scripts and the API.
