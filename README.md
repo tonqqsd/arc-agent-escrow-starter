@@ -12,7 +12,6 @@ It gives the Arc ecosystem a small but useful reference implementation for an ag
 - tests that document the settlement behavior
 - metadata examples for job specs and deliverables
 
-This project does not guarantee any airdrop. It is designed to create a real, verifiable contribution you can publish, deploy on testnet, document, and share with the Arc community.
 
 ## Why This Fits Arc
 
