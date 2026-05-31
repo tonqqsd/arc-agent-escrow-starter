@@ -1,0 +1,17 @@
+{
+  "schema": "arc-agent-escrow-starter/deliverable/v1",
+  "jobId": "1",
+  "summary": "Completed event indexer and replay instructions.",
+  "artifacts": [
+    {
+      "type": "repository",
+      "url": "https://github.com/example/arc-event-indexer"
+    },
+    {
+      "type": "demo",
+      "url": "https://example.com/arc-indexer-demo"
+    }
+  ],
+  "notes": "Replace these URLs before publishing the metadata object."
+}
+

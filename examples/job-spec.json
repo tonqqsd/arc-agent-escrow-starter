@@ -1,0 +1,15 @@
+{
+  "schema": "arc-agent-escrow-starter/job-spec/v1",
+  "title": "Index ArcAgentEscrow events",
+  "summary": "Build a small event indexer that reads JobCreated, DeliverableSubmitted, JobApproved, JobDisputed, JobRefunded, and DisputeResolved events from an Arc Testnet deployment.",
+  "acceptanceCriteria": [
+    "The indexer can start from a configured block number.",
+    "The indexer persists events with jobId, actor addresses, amount, URI fields, and transaction hash.",
+    "The README includes setup and replay instructions."
+  ],
+  "links": {
+    "repo": "https://github.com/example/arc-agent-escrow-starter",
+    "docs": "https://docs.arc.io/build"
+  }
+}
+
