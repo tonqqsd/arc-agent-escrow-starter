@@ -5,7 +5,7 @@ import { ethers } from "ethers";
 import { ARC_TESTNET, formatNativeUsdc, requireArcTestnet } from "../src/arc.js";
 
 const PORT = Number(process.env.API_PORT || 8787);
-const MAX_BLOCK_RANGE = 75_000n;
+const MAX_BLOCK_RANGE = 9_500n;
 
 const provider = new ethers.JsonRpcProvider(process.env.ARC_TESTNET_RPC_URL || ARC_TESTNET.rpcUrl);
 
@@ -51,14 +51,17 @@ function normalizeAddress(value: unknown): string | null {
 async function getSafeBlockWindow(fromBlockParam: unknown) {
   const latest = BigInt(await provider.getBlockNumber());
   let requested = latest - 25_000n;
+  const configuredFromBlock = process.env.ESCROW_FROM_BLOCK;
+  const requestedFromBlock =
+    typeof fromBlockParam === "string" && fromBlockParam.trim() !== "" ? fromBlockParam : configuredFromBlock;
 
-  if (typeof fromBlockParam === "string" && fromBlockParam.trim() !== "") {
-    if (!/^\d+$/.test(fromBlockParam.trim())) {
+  if (requestedFromBlock && requestedFromBlock.trim() !== "") {
+    if (!/^\d+$/.test(requestedFromBlock.trim())) {
       const error: ApiError = new Error("From block must be a non-negative integer.");
       error.statusCode = 400;
       throw error;
     }
-    requested = BigInt(fromBlockParam.trim());
+    requested = BigInt(requestedFromBlock.trim());
   }
 
   const fromBlock = requested < 0n ? 0n : requested > latest ? latest : requested;
@@ -158,7 +161,8 @@ app.get("/api/status", async (_req, res, next) => {
       gasPriceGwei: ethers.formatUnits(feeData.gasPrice ?? 0n, "gwei"),
       explorerUrl: ARC_TESTNET.explorerUrl,
       faucetUrl: ARC_TESTNET.faucetUrl,
-      configuredEscrowAddress: process.env.ESCROW_ADDRESS || ""
+      configuredEscrowAddress: process.env.ESCROW_ADDRESS || "",
+      configuredFromBlock: process.env.ESCROW_FROM_BLOCK || ""
     });
   } catch (error) {
     next(error);

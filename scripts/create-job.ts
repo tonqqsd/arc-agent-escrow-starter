@@ -7,6 +7,7 @@ const ESCROW_ABI = [
   "function createJob(address agent,address arbiter,string metadataURI,uint64 deadline) payable returns (uint256)",
   "event JobCreated(uint256 indexed jobId,address indexed payer,address indexed agent,address arbiter,uint256 amount,string metadataURI,uint64 deadline)"
 ];
+const iface = new ethers.Interface(ESCROW_ABI);
 
 function requiredEnv(name: string): string {
   const value = process.env[name];
@@ -41,8 +42,21 @@ async function main() {
     maxPriorityFeePerGas: DEFAULT_PRIORITY_FEE_PER_GAS
   });
   const receipt = await tx.wait();
+  let created: ReturnType<typeof iface.parseLog> | null = null;
+  for (const receiptLog of receipt?.logs ?? []) {
+    try {
+      const parsed = iface.parseLog(receiptLog);
+      if (parsed?.name === "JobCreated") {
+        created = parsed;
+        break;
+      }
+    } catch {
+      // Ignore logs emitted by other contracts in the receipt.
+    }
+  }
 
   console.log(`Create job tx: ${receipt?.hash}`);
+  if (created) console.log(`Job ID: ${created.args.jobId.toString()}`);
 }
 
 main().catch((error) => {

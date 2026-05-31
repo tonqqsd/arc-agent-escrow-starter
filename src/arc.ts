@@ -19,7 +19,7 @@ export const ARC_USDC_ERC20 = {
   decimals: 6
 } as const;
 
-export const MIN_MAX_FEE_PER_GAS = ethers.parseUnits("20", "gwei");
+export const MIN_MAX_FEE_PER_GAS = ethers.parseUnits("30", "gwei");
 export const DEFAULT_PRIORITY_FEE_PER_GAS = ethers.parseUnits("1", "gwei");
 
 export function requireArcTestnet(chainId: bigint | number): void {
@@ -50,4 +50,3 @@ export const ERC20_BALANCE_ABI = [
   "function decimals() view returns (uint8)",
   "function symbol() view returns (string)"
 ] as const;
-

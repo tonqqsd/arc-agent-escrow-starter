@@ -159,6 +159,9 @@ export function App() {
         if (!contractAddress && data.configuredEscrowAddress) {
           setContractAddress(data.configuredEscrowAddress);
         }
+        if (!fromBlock && data.configuredFromBlock) {
+          setFromBlock(data.configuredFromBlock);
+        }
       })
       .catch((caught) => setStatusError(caught instanceof Error ? caught.message : "Status unavailable"));
   }, []);

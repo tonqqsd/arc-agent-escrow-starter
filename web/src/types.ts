@@ -25,5 +25,5 @@ export type ApiStatus = {
   explorerUrl: string;
   faucetUrl: string;
   configuredEscrowAddress: string;
+  configuredFromBlock: string;
 };
-

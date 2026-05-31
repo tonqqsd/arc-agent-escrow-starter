@@ -71,7 +71,7 @@ The API runs on `http://localhost:8787` and exposes:
 - `GET /api/status`
 - `GET /api/jobs?address=<ESCROW_ADDRESS>&fromBlock=<BLOCK>`
 
-Without a deployed contract address, the frontend shows sample jobs so the demo flow is still visible. Once `ESCROW_ADDRESS` is set, the API reads real Arc Testnet events.
+Without a deployed contract address, the frontend shows sample jobs so the demo flow is still visible. Once `ESCROW_ADDRESS` is set, the API reads real Arc Testnet events. Set `ESCROW_FROM_BLOCK` to the deployment block so event reads stay within Arc RPC's log range limit.
 
 ## Deploy To Arc Testnet
 
