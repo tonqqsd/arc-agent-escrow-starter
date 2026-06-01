@@ -8,7 +8,7 @@ export const ARC_TESTNET_PARAMS = {
   nativeCurrency: {
     name: "USDC",
     symbol: "USDC",
-    decimals: 18
+    decimals: 6
   },
   rpcUrls: ["https://rpc.testnet.arc.network"],
   blockExplorerUrls: ["https://testnet.arcscan.app"]

@@ -11,6 +11,7 @@ It gives the Arc ecosystem a small but useful reference implementation for an ag
 - deployment and job lifecycle scripts
 - tests that document the settlement behavior
 - metadata examples for job specs and deliverables
+- Foundry and Circle Developer-Controlled Wallets SDK readiness
 
 
 ## Why This Fits Arc
@@ -44,9 +45,13 @@ Fill `.env` locally. Do not paste private keys in chat, commit them, or pass the
 
 ```bash
 npm run check
+npm run arc:cast:check
+npm run foundry:build
 ```
 
 The script checks the chain ID, block number, gas price, and optional wallet balances.
+
+For Circle and Arc developer tooling setup, see `docs/tooling.md`.
 
 ## Compile And Test
 

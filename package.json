@@ -10,6 +10,9 @@
     "test": "hardhat test",
     "typecheck": "hardhat compile && tsc --noEmit",
     "check": "tsx scripts/check-arc.ts",
+    "foundry:build": "forge build",
+    "arc:cast:check": "cast chain-id --rpc-url ${ARC_TESTNET_RPC_URL:-https://rpc.testnet.arc.network} && cast block-number --rpc-url ${ARC_TESTNET_RPC_URL:-https://rpc.testnet.arc.network}",
+    "circle:wallets:check": "tsx scripts/circle-wallets-check.ts",
     "api:dev": "tsx watch api/server.ts",
     "api:start": "tsx api/server.ts",
     "web:dev": "vite --config web/vite.config.ts",
@@ -27,6 +30,7 @@
     "job:refund": "hardhat run --network arcTestnet scripts/refund-expired.ts"
   },
   "dependencies": {
+    "@circle-fin/developer-controlled-wallets": "^10.6.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
@@ -44,8 +48,8 @@
     "@nomicfoundation/hardhat-ethers-chai-matchers": "^3.0.9",
     "@nomicfoundation/hardhat-mocha": "^3.0.20",
     "@nomicfoundation/hardhat-network-helpers": "^3.0.9",
-    "@types/cors": "^2.8.19",
     "@types/chai": "^5.2.3",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.5",
     "@types/mocha": "^10.0.10",
     "@types/node": "^24.0.0",
