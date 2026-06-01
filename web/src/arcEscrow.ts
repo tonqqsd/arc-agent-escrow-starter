@@ -25,6 +25,8 @@ export const escrowAbi = [
 
 export type EthereumProvider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  on?: (event: string, listener: (...args: unknown[]) => void) => void;
+  removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
   isMetaMask?: boolean;
   isOkxWallet?: boolean;
   isOKExWallet?: boolean;
@@ -110,6 +112,19 @@ function requireProvider(provider?: EthereumProvider) {
   return selectedProvider;
 }
 
+function readAccounts(value: unknown) {
+  return Array.isArray(value) ? value.filter((account): account is string => typeof account === "string") : [];
+}
+
+function readChainId(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+async function readWalletBalance(provider: BrowserProvider, address: string) {
+  const balance = await provider.getBalance(address);
+  return ethers.formatUnits(balance, 18);
+}
+
 export async function switchToArcTestnet(provider?: EthereumProvider) {
   const selectedProvider = requireProvider(provider);
   try {
@@ -135,10 +150,42 @@ export async function connectWallet(walletProvider?: EthereumProvider) {
   await switchToArcTestnet(selectedProvider);
   const provider = new BrowserProvider(selectedProvider);
   const accounts = await provider.send("eth_requestAccounts", []);
+  const address = accounts[0] as string;
+  const chainId = readChainId(await selectedProvider.request({ method: "eth_chainId" }));
   return {
-    address: accounts[0] as string,
+    address,
+    chainId,
+    balance: await readWalletBalance(provider, address),
     provider
   };
+}
+
+export async function getWalletSnapshot(walletProvider?: EthereumProvider) {
+  const selectedProvider = requireProvider(walletProvider);
+  const provider = new BrowserProvider(selectedProvider);
+  const [accountsValue, chainIdValue] = await Promise.all([
+    selectedProvider.request({ method: "eth_accounts" }),
+    selectedProvider.request({ method: "eth_chainId" })
+  ]);
+  const address = readAccounts(accountsValue)[0] || "";
+  return {
+    address,
+    chainId: readChainId(chainIdValue),
+    balance: address ? await readWalletBalance(provider, address) : ""
+  };
+}
+
+export async function disconnectWallet(walletProvider?: EthereumProvider) {
+  const selectedProvider = walletProvider || (typeof window !== "undefined" ? window.ethereum : undefined);
+  if (!selectedProvider) return;
+  try {
+    await selectedProvider.request({
+      method: "wallet_revokePermissions",
+      params: [{ eth_accounts: {} }]
+    });
+  } catch {
+    // Many wallets do not implement permission revocation. Local app state is still cleared by the caller.
+  }
 }
 
 export async function getSignedEscrow(address: string, walletProvider?: EthereumProvider) {

@@ -12,6 +12,7 @@ types/
 ignition/deployments/
 dist/
 output/
+.playwright-cli/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

@@ -269,6 +269,11 @@ select:focus {
   background: #b42318;
 }
 
+.button.icon-button {
+  width: 40px;
+  padding: 0;
+}
+
 .button.wide {
   width: 100%;
   margin-top: 12px;
@@ -290,6 +295,44 @@ select:focus {
   border-color: #fac5be;
   background: #fff5f4;
   color: #a73529;
+}
+
+.wallet-status-grid {
+  border: 1px solid #dfe5ef;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+  display: grid;
+  grid-template-columns: minmax(220px, 1.8fr) repeat(3, minmax(140px, 1fr)) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.wallet-status-grid div {
+  min-width: 0;
+}
+
+.wallet-status-grid span {
+  display: block;
+  color: #687386;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 5px;
+}
+
+.wallet-status-grid strong {
+  display: block;
+  color: #20242b;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.ok-text {
+  color: #087443 !important;
+}
+
+.warn-text {
+  color: #b42318 !important;
 }
 
 .metrics-grid {
@@ -503,7 +546,8 @@ td a {
   }
 
   .metrics-grid,
-  .product-grid {
+  .product-grid,
+  .wallet-status-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -531,13 +575,15 @@ td a {
   .network-pill,
   .wallet-pill,
   .wallet-menu,
-  .top-actions .button {
+  .top-actions .button,
+  .wallet-status-grid .button {
     width: 100%;
   }
 
   .metrics-grid,
   .product-grid,
-  .form-grid {
+  .form-grid,
+  .wallet-status-grid {
     grid-template-columns: 1fr;
   }
 

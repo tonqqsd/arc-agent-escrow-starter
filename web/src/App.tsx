@@ -12,6 +12,7 @@ import {
   GitBranch,
   Layers3,
   Link2,
+  LogOut,
   Loader2,
   Network,
   Play,
@@ -25,13 +26,20 @@ import { getJobs, getStatus } from "./api.js";
 import {
   ARC_TESTNET_CHAIN_ID,
   connectWallet,
+  disconnectWallet,
   getSignedEscrow,
+  getWalletSnapshot,
   hasWallet,
   parseNativeUsdc,
   requestWalletProviders,
   type DiscoveredWallet
 } from "./arcEscrow.js";
 import type { ApiStatus, IndexedJob, JobStatus } from "./types.js";
+
+const SELECTED_WALLET_KEY = "selectedWalletId";
+const WALLET_CONNECTED_KEY = "walletConnected";
+const WALLET_ADDRESS_KEY = "walletAddress";
+const WALLET_CHAIN_KEY = "walletChainId";
 
 const sampleJobs: IndexedJob[] = [
   {
@@ -103,12 +111,35 @@ function dateLabel(timestamp: number) {
   }).format(new Date(timestamp * 1000));
 }
 
+function chainIdLabel(chainId: string) {
+  if (!chainId) return "Not connected";
+  if (chainId.startsWith("0x")) return String(Number.parseInt(chainId, 16));
+  return chainId;
+}
+
+function isArcChain(chainId: string) {
+  return chainIdLabel(chainId) === String(ARC_TESTNET_CHAIN_ID);
+}
+
+function formatWalletBalance(value: string) {
+  if (!value) return "Not loaded";
+  return `${Number(value).toFixed(4)} USDC`;
+}
+
+function sameAddress(left?: string, right?: string) {
+  return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
+}
+
 export function App() {
   const [status, setStatus] = useState<ApiStatus | null>(null);
   const [statusError, setStatusError] = useState("");
   const [walletOptions, setWalletOptions] = useState<DiscoveredWallet[]>([]);
-  const [selectedWalletId, setSelectedWalletId] = useState("");
-  const [walletAddress, setWalletAddress] = useState("");
+  const [selectedWalletId, setSelectedWalletId] = useState(() => localStorage.getItem(SELECTED_WALLET_KEY) || "");
+  const [walletAddress, setWalletAddress] = useState(() => localStorage.getItem(WALLET_ADDRESS_KEY) || "");
+  const [walletChainId, setWalletChainId] = useState(() => localStorage.getItem(WALLET_CHAIN_KEY) || "");
+  const [walletBalance, setWalletBalance] = useState("");
+  const [isWalletConnected, setIsWalletConnected] = useState(() => localStorage.getItem(WALLET_CONNECTED_KEY) === "true");
+  const [isRestoringWallet, setIsRestoringWallet] = useState(false);
   const [contractAddress, setContractAddress] = useState(() => localStorage.getItem("escrowAddress") || "");
   const [fromBlock, setFromBlock] = useState(() => localStorage.getItem("fromBlock") || "");
   const [jobs, setJobs] = useState<IndexedJob[]>(sampleJobs);
@@ -135,7 +166,15 @@ export function App() {
   const selectedJob = jobs.find((job) => job.id === selectedJobId) || jobs[0];
   const selectedWallet = walletOptions.find((wallet) => wallet.id === selectedWalletId) || walletOptions[0];
   const walletProviderAvailable = hasWallet(selectedWallet?.provider);
-  const canExecuteTransaction = Boolean(contractAddress && walletProviderAvailable);
+  const connectedOnArc = Boolean(isWalletConnected && walletAddress && isArcChain(walletChainId));
+  const canExecuteTransaction = Boolean(contractAddress && walletProviderAvailable && connectedOnArc);
+  const selectedJobRole = selectedJob
+    ? [
+        sameAddress(walletAddress, selectedJob.payer) && "Payer",
+        sameAddress(walletAddress, selectedJob.agent) && "Agent",
+        sameAddress(walletAddress, selectedJob.arbiter) && "Arbiter"
+      ].filter(Boolean).join(", ") || "No role"
+    : "No job selected";
 
   const metrics = useMemo(() => {
     const active = jobs.filter((job) => ["Funded", "Submitted", "Disputed"].includes(job.status));
@@ -148,9 +187,55 @@ export function App() {
   useEffect(() => {
     return requestWalletProviders((wallets) => {
       setWalletOptions(wallets);
-      setSelectedWalletId((current) => (wallets.some((wallet) => wallet.id === current) ? current : wallets[0]?.id || ""));
+      setSelectedWalletId((current) => {
+        const remembered = localStorage.getItem(SELECTED_WALLET_KEY) || current;
+        if (wallets.some((wallet) => wallet.id === remembered)) return remembered;
+        return wallets[0]?.id || "";
+      });
     });
   }, []);
+
+  useEffect(() => {
+    if (selectedWalletId) localStorage.setItem(SELECTED_WALLET_KEY, selectedWalletId);
+  }, [selectedWalletId]);
+
+  useEffect(() => {
+    const provider = selectedWallet?.provider;
+    if (!provider) return;
+
+    function handleAccountsChanged(accountsValue: unknown) {
+      const nextAddress = Array.isArray(accountsValue) && typeof accountsValue[0] === "string" ? accountsValue[0] : "";
+      if (!nextAddress) {
+        clearWalletSession();
+        return;
+      }
+      setWalletAddress(nextAddress);
+      setIsWalletConnected(true);
+      localStorage.setItem(WALLET_CONNECTED_KEY, "true");
+      localStorage.setItem(WALLET_ADDRESS_KEY, nextAddress);
+      refreshWalletState(false);
+    }
+
+    function handleChainChanged(chainIdValue: unknown) {
+      if (typeof chainIdValue !== "string") return;
+      setWalletChainId(chainIdValue);
+      localStorage.setItem(WALLET_CHAIN_KEY, chainIdValue);
+      refreshWalletState(false);
+    }
+
+    provider.on?.("accountsChanged", handleAccountsChanged);
+    provider.on?.("chainChanged", handleChainChanged);
+
+    return () => {
+      provider.removeListener?.("accountsChanged", handleAccountsChanged);
+      provider.removeListener?.("chainChanged", handleChainChanged);
+    };
+  }, [selectedWallet]);
+
+  useEffect(() => {
+    if (!selectedWallet?.provider || localStorage.getItem(WALLET_CONNECTED_KEY) !== "true") return;
+    refreshWalletState(true);
+  }, [selectedWallet]);
 
   useEffect(() => {
     getStatus()
@@ -173,6 +258,44 @@ export function App() {
   useEffect(() => {
     localStorage.setItem("fromBlock", fromBlock);
   }, [fromBlock]);
+
+  function rememberWallet(address: string, chainId: string, balance: string) {
+    setWalletAddress(address);
+    setWalletChainId(chainId);
+    setWalletBalance(balance);
+    setIsWalletConnected(Boolean(address));
+    localStorage.setItem(WALLET_CONNECTED_KEY, address ? "true" : "false");
+    if (address) localStorage.setItem(WALLET_ADDRESS_KEY, address);
+    if (chainId) localStorage.setItem(WALLET_CHAIN_KEY, chainId);
+  }
+
+  function clearWalletSession() {
+    setWalletAddress("");
+    setWalletChainId("");
+    setWalletBalance("");
+    setIsWalletConnected(false);
+    localStorage.removeItem(WALLET_CONNECTED_KEY);
+    localStorage.removeItem(WALLET_ADDRESS_KEY);
+    localStorage.removeItem(WALLET_CHAIN_KEY);
+  }
+
+  async function refreshWalletState(isRestore = false) {
+    if (!selectedWallet?.provider) return;
+    setIsRestoringWallet(isRestore);
+    try {
+      const snapshot = await getWalletSnapshot(selectedWallet.provider);
+      if (snapshot.address) {
+        rememberWallet(snapshot.address, snapshot.chainId, snapshot.balance);
+      } else if (isRestore) {
+        setIsWalletConnected(false);
+        setWalletBalance("");
+      }
+    } catch (caught) {
+      if (!isRestore) setError(caught instanceof Error ? caught.message : "Could not refresh wallet");
+    } finally {
+      setIsRestoringWallet(false);
+    }
+  }
 
   async function refreshJobs() {
     if (!contractAddress) {
@@ -198,11 +321,18 @@ export function App() {
     setError("");
     try {
       const wallet = await connectWallet(selectedWallet?.provider);
-      setWalletAddress(wallet.address);
+      rememberWallet(wallet.address, wallet.chainId, wallet.balance);
       setNotice("Wallet connected on Arc Testnet.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Wallet connection failed");
     }
+  }
+
+  async function disconnect() {
+    setError("");
+    await disconnectWallet(selectedWallet?.provider);
+    clearWalletSession();
+    setNotice("Wallet disconnected from this app.");
   }
 
   async function execute(name: string, run: (contract: Awaited<ReturnType<typeof getSignedEscrow>>) => Promise<unknown>) {
@@ -210,8 +340,12 @@ export function App() {
       setError("Set ESCROW_ADDRESS first.");
       return;
     }
-    if (!walletProviderAvailable) {
-      setError("Install or enable a browser wallet before sending Arc transactions.");
+    if (!walletProviderAvailable || !isWalletConnected || !walletAddress) {
+      setError("Connect a browser wallet before sending Arc transactions.");
+      return;
+    }
+    if (!connectedOnArc) {
+      setError(`Switch the connected wallet to Arc Testnet (${ARC_TESTNET_CHAIN_ID}) before sending transactions.`);
       return;
     }
     setError("");
@@ -219,7 +353,7 @@ export function App() {
     try {
       if (!walletAddress) {
         const wallet = await connectWallet(selectedWallet?.provider);
-        setWalletAddress(wallet.address);
+        rememberWallet(wallet.address, wallet.chainId, wallet.balance);
       }
       const contract = await getSignedEscrow(contractAddress, selectedWallet?.provider);
       const tx = (await run(contract)) as { wait: () => Promise<{ hash?: string }> };
@@ -306,10 +440,38 @@ export function App() {
             )}
             <button className="button secondary" onClick={connect} disabled={!walletProviderAvailable} title={`Expected Arc chain ID ${ARC_TESTNET_CHAIN_ID}`}>
               <Wallet size={16} />
-              {walletAddress ? shortAddress(walletAddress) : walletProviderAvailable ? "Connect wallet" : "No wallet"}
+              {isRestoringWallet ? "Checking wallet" : isWalletConnected && walletAddress ? shortAddress(walletAddress) : walletAddress ? `Reconnect ${shortAddress(walletAddress)}` : walletProviderAvailable ? "Connect wallet" : "No wallet"}
             </button>
+            {walletAddress && (
+              <button className="button icon-button" onClick={disconnect} title="Disconnect wallet">
+                <LogOut size={16} />
+              </button>
+            )}
           </div>
         </header>
+
+        <section className="wallet-status-grid">
+          <div>
+            <span>Bound wallet</span>
+            <strong>{walletAddress || "Not connected"}</strong>
+          </div>
+          <div>
+            <span>Wallet network</span>
+            <strong className={connectedOnArc ? "ok-text" : "warn-text"}>{connectedOnArc ? `Arc Testnet (${ARC_TESTNET_CHAIN_ID})` : chainIdLabel(walletChainId)}</strong>
+          </div>
+          <div>
+            <span>Native balance</span>
+            <strong>{formatWalletBalance(walletBalance)}</strong>
+          </div>
+          <div>
+            <span>Selected job role</span>
+            <strong>{selectedJobRole}</strong>
+          </div>
+          <button className="button secondary" onClick={() => refreshWalletState(false)} disabled={!walletProviderAvailable || !walletAddress}>
+            <RefreshCw size={16} />
+            Refresh wallet
+          </button>
+        </section>
 
         <section className="config-row">
           <label>
