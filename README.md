@@ -11,7 +11,7 @@ It gives the Arc ecosystem a small but useful reference implementation for an ag
 - deployment and job lifecycle scripts
 - tests that document the settlement behavior
 - metadata examples for job specs and deliverables
-- Foundry and Circle Developer-Controlled Wallets SDK readiness
+- Foundry and Circle Developer-Controlled Wallets SDK integration setup
 
 
 ## Why This Fits Arc
