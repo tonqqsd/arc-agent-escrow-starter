@@ -3,6 +3,7 @@ import {
   ArrowRight,
   BadgeDollarSign,
   Bot,
+  ChevronDown,
   CheckCircle2,
   CircleDollarSign,
   Clock3,
@@ -21,7 +22,7 @@ import {
   ShieldCheck,
   Wallet
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getJobs, getStatus } from "./api.js";
 import {
   ARC_TESTNET_CHAIN_ID,
@@ -40,6 +41,8 @@ const SELECTED_WALLET_KEY = "selectedWalletId";
 const WALLET_CONNECTED_KEY = "walletConnected";
 const WALLET_ADDRESS_KEY = "walletAddress";
 const WALLET_CHAIN_KEY = "walletChainId";
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/;
 
 const sampleJobs: IndexedJob[] = [
   {
@@ -130,23 +133,72 @@ function sameAddress(left?: string, right?: string) {
   return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
 }
 
+function isAddress(value: string) {
+  return ADDRESS_PATTERN.test(value) && value.toLowerCase() !== ZERO_ADDRESS;
+}
+
+function isPositiveDecimal(value: string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0;
+}
+
+function isPositiveInteger(value: string) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0;
+}
+
+function isBasisPoints(value: string) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= 10_000;
+}
+
+function hasText(value: string) {
+  return value.trim().length > 0;
+}
+
+function readStoredEscrowAddress() {
+  const value = localStorage.getItem("escrowAddress") || "";
+  return isAddress(value) ? value : "";
+}
+
+function readStoredFromBlock() {
+  const value = localStorage.getItem("fromBlock") || "";
+  return /^\d+$/.test(value) ? value : "";
+}
+
+function createTransactionBlocker(params: {
+  contractAddress: string;
+  walletProviderAvailable: boolean;
+  isWalletConnected: boolean;
+  walletAddress: string;
+  connectedOnArc: boolean;
+}) {
+  if (!isAddress(params.contractAddress)) return "Set a valid escrow contract address.";
+  if (!params.walletProviderAvailable) return "Install or enable a browser wallet.";
+  if (!params.isWalletConnected || !params.walletAddress) return "Connect a wallet before sending Arc transactions.";
+  if (!params.connectedOnArc) return `Switch the connected wallet to Arc Testnet (${ARC_TESTNET_CHAIN_ID}).`;
+  return "";
+}
+
 export function App() {
   const [status, setStatus] = useState<ApiStatus | null>(null);
   const [statusError, setStatusError] = useState("");
   const [walletOptions, setWalletOptions] = useState<DiscoveredWallet[]>([]);
   const [selectedWalletId, setSelectedWalletId] = useState(() => localStorage.getItem(SELECTED_WALLET_KEY) || "");
+  const [isWalletMenuOpen, setIsWalletMenuOpen] = useState(false);
   const [walletAddress, setWalletAddress] = useState(() => localStorage.getItem(WALLET_ADDRESS_KEY) || "");
   const [walletChainId, setWalletChainId] = useState(() => localStorage.getItem(WALLET_CHAIN_KEY) || "");
   const [walletBalance, setWalletBalance] = useState("");
   const [isWalletConnected, setIsWalletConnected] = useState(() => localStorage.getItem(WALLET_CONNECTED_KEY) === "true");
   const [isRestoringWallet, setIsRestoringWallet] = useState(false);
-  const [contractAddress, setContractAddress] = useState(() => localStorage.getItem("escrowAddress") || "");
-  const [fromBlock, setFromBlock] = useState(() => localStorage.getItem("fromBlock") || "");
+  const [contractAddress, setContractAddress] = useState(readStoredEscrowAddress);
+  const [fromBlock, setFromBlock] = useState(readStoredFromBlock);
   const [jobs, setJobs] = useState<IndexedJob[]>(sampleJobs);
   const [selectedJobId, setSelectedJobId] = useState("3");
   const [isLoadingJobs, setIsLoadingJobs] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const walletMenuRef = useRef<HTMLDivElement>(null);
 
   const [createForm, setCreateForm] = useState({
     agent: "",
@@ -167,14 +219,93 @@ export function App() {
   const selectedWallet = walletOptions.find((wallet) => wallet.id === selectedWalletId) || walletOptions[0];
   const walletProviderAvailable = hasWallet(selectedWallet?.provider);
   const connectedOnArc = Boolean(isWalletConnected && walletAddress && isArcChain(walletChainId));
-  const canExecuteTransaction = Boolean(contractAddress && walletProviderAvailable && connectedOnArc);
+  const transactionBlocker = createTransactionBlocker({
+    contractAddress,
+    walletProviderAvailable,
+    isWalletConnected,
+    walletAddress,
+    connectedOnArc
+  });
+  const canExecuteTransaction = !transactionBlocker;
+  const createBlocker = transactionBlocker ||
+    (!isAddress(createForm.agent) ? "Enter a valid agent address." : "") ||
+    (!isAddress(createForm.arbiter) ? "Enter a valid arbiter address." : "") ||
+    (!isPositiveDecimal(createForm.amount) ? "Enter a positive native USDC amount." : "") ||
+    (!isPositiveInteger(createForm.deadlineHours) ? "Enter a positive deadline in hours." : "") ||
+    (!hasText(createForm.metadataURI) ? "Enter a metadata URI." : "");
+  const canCreateJob = !createBlocker;
+  const walletButtonLabel = isRestoringWallet
+    ? "Checking wallet"
+    : isWalletConnected && walletAddress
+      ? shortAddress(walletAddress)
+      : walletAddress
+        ? `Reconnect ${shortAddress(walletAddress)}`
+        : walletProviderAvailable
+          ? "Connect wallet"
+          : "No wallet";
+  const walletIsPayer = sameAddress(walletAddress, selectedJob?.payer);
+  const walletIsAgent = sameAddress(walletAddress, selectedJob?.agent);
+  const walletIsArbiter = sameAddress(walletAddress, selectedJob?.arbiter);
+  const isSelectedJobLive = Boolean(selectedJob && selectedJob.updatedTxHash !== "0xsample");
+  const selectedJobFinalized = Boolean(selectedJob && ["Released", "Refunded"].includes(selectedJob.status));
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const selectedJobExpired = Boolean(selectedJob && nowSeconds > selectedJob.deadline);
   const selectedJobRole = selectedJob
     ? [
-        sameAddress(walletAddress, selectedJob.payer) && "Payer",
-        sameAddress(walletAddress, selectedJob.agent) && "Agent",
-        sameAddress(walletAddress, selectedJob.arbiter) && "Arbiter"
+        walletIsPayer && "Payer",
+        walletIsAgent && "Agent",
+        walletIsArbiter && "Arbiter"
       ].filter(Boolean).join(", ") || "No role"
     : "No job selected";
+  const liveJobBlocker = isSelectedJobLive ? "" : "Refresh jobs and select a live on-chain job.";
+  const actionBaseBlocker = liveJobBlocker || (selectedJobFinalized ? "Job is finalized." : "") || transactionBlocker;
+  const submitBlocker = actionBaseBlocker ||
+    (!walletIsAgent ? "Connected wallet must be the selected job agent." : "") ||
+    (selectedJob?.status !== "Funded" ? "Job must be Funded." : "") ||
+    (selectedJobExpired ? "Deadline has passed." : "") ||
+    (!hasText(actionForm.deliverableURI) ? "Enter a deliverable URI." : "");
+  const approveBlocker = actionBaseBlocker ||
+    (!walletIsPayer ? "Connected wallet must be the selected job payer." : "") ||
+    (selectedJob?.status !== "Submitted" ? "Job must be Submitted." : "");
+  const disputeBlocker = actionBaseBlocker ||
+    (!walletIsPayer && !walletIsAgent ? "Connected wallet must be the payer or agent." : "") ||
+    (!["Funded", "Submitted"].includes(selectedJob?.status || "") ? "Job must be Funded or Submitted." : "") ||
+    (!hasText(actionForm.disputeURI) ? "Enter a dispute URI." : "");
+  const resolveBlocker = actionBaseBlocker ||
+    (!walletIsArbiter ? "Connected wallet must be the selected job arbiter." : "") ||
+    (selectedJob?.status !== "Disputed" ? "Job must be Disputed." : "") ||
+    (!isBasisPoints(actionForm.agentSplitBps) ? "Agent split must be 0 to 10000 bps." : "") ||
+    (!hasText(actionForm.resolutionURI) ? "Enter a resolution URI." : "");
+  const refundBlocker = actionBaseBlocker ||
+    (!walletIsPayer ? "Connected wallet must be the selected job payer." : "") ||
+    (selectedJob?.status !== "Funded" ? "Job must be Funded." : "") ||
+    (!selectedJobExpired ? "Deadline has not passed yet." : "");
+  const nextActionLabel = !selectedJob
+    ? "No job selected"
+    : !isSelectedJobLive
+      ? "Refresh jobs"
+      : selectedJobFinalized
+        ? "Finalized"
+        : !walletAddress
+          ? "Connect wallet"
+          : selectedJobRole === "No role"
+            ? "No wallet role"
+            : !submitBlocker
+              ? "Submit deliverable"
+              : !approveBlocker
+                ? "Approve payout"
+                : !disputeBlocker
+                  ? "Open dispute"
+                  : !resolveBlocker
+                    ? "Resolve split"
+                    : !refundBlocker
+                      ? "Refund expired"
+                      : "No eligible action";
+  const activeLifecycleStep = selectedJob?.status === "Submitted"
+    ? "Delivered"
+    : selectedJob?.status === "Released" || selectedJob?.status === "Refunded"
+      ? "Settled"
+      : selectedJob?.status;
 
   const metrics = useMemo(() => {
     const active = jobs.filter((job) => ["Funded", "Submitted", "Disputed"].includes(job.status));
@@ -198,6 +329,23 @@ export function App() {
   useEffect(() => {
     if (selectedWalletId) localStorage.setItem(SELECTED_WALLET_KEY, selectedWalletId);
   }, [selectedWalletId]);
+
+  useEffect(() => {
+    if (jobs.length && !jobs.some((job) => job.id === selectedJobId)) {
+      setSelectedJobId(jobs[0].id);
+    }
+  }, [jobs, selectedJobId]);
+
+  useEffect(() => {
+    function closeWalletMenu(event: MouseEvent) {
+      if (!walletMenuRef.current?.contains(event.target as Node)) {
+        setIsWalletMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", closeWalletMenu);
+    return () => document.removeEventListener("mousedown", closeWalletMenu);
+  }, []);
 
   useEffect(() => {
     const provider = selectedWallet?.provider;
@@ -317,12 +465,19 @@ export function App() {
     }
   }
 
-  async function connect() {
+  async function connect(wallet = selectedWallet) {
     setError("");
+    if (!wallet?.provider) {
+      setError("Install or enable a browser wallet before connecting.");
+      return;
+    }
     try {
-      const wallet = await connectWallet(selectedWallet?.provider);
-      rememberWallet(wallet.address, wallet.chainId, wallet.balance);
+      setSelectedWalletId(wallet.id);
+      localStorage.setItem(SELECTED_WALLET_KEY, wallet.id);
+      const connectedWallet = await connectWallet(wallet.provider);
+      rememberWallet(connectedWallet.address, connectedWallet.chainId, connectedWallet.balance);
       setNotice("Wallet connected on Arc Testnet.");
+      setIsWalletMenuOpen(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Wallet connection failed");
     }
@@ -332,12 +487,13 @@ export function App() {
     setError("");
     await disconnectWallet(selectedWallet?.provider);
     clearWalletSession();
+    setIsWalletMenuOpen(false);
     setNotice("Wallet disconnected from this app.");
   }
 
-  async function execute(name: string, run: (contract: Awaited<ReturnType<typeof getSignedEscrow>>) => Promise<unknown>) {
-    if (!contractAddress) {
-      setError("Set ESCROW_ADDRESS first.");
+  async function execute(name: string, blocker: string, run: (contract: Awaited<ReturnType<typeof getSignedEscrow>>) => Promise<unknown>) {
+    if (blocker) {
+      setError(blocker);
       return;
     }
     if (!walletProviderAvailable || !isWalletConnected || !walletAddress) {
@@ -367,7 +523,7 @@ export function App() {
 
   async function createJob() {
     const deadline = Math.floor(Date.now() / 1000) + Number(createForm.deadlineHours) * 3600;
-    await execute("Create job", (contract) =>
+    await execute("Create job", createBlocker, (contract) =>
       contract.createJob(createForm.agent, createForm.arbiter, createForm.metadataURI, deadline, {
         value: parseNativeUsdc(createForm.amount)
       })
@@ -420,33 +576,51 @@ export function App() {
               <Network size={16} />
               {status ? `${status.network} · ${status.chainId} · #${status.blockNumber}` : statusError || "Checking Arc..."}
             </div>
-            {walletOptions.length > 1 && (
-              <label className="wallet-menu">
-                Wallet
-                <select value={selectedWallet?.id || ""} onChange={(event) => setSelectedWalletId(event.target.value)}>
-                  {walletOptions.map((wallet) => (
-                    <option value={wallet.id} key={wallet.id}>
-                      {wallet.info.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {walletOptions.length === 1 && (
-              <div className="wallet-pill">
+            <div className="wallet-connect" ref={walletMenuRef}>
+              <button
+                aria-expanded={isWalletMenuOpen}
+                className="button secondary wallet-trigger"
+                onClick={() => setIsWalletMenuOpen((open) => !open)}
+                title={`Expected Arc chain ID ${ARC_TESTNET_CHAIN_ID}`}
+              >
                 <Wallet size={16} />
-                {walletOptions[0].info.name}
-              </div>
-            )}
-            <button className="button secondary" onClick={connect} disabled={!walletProviderAvailable} title={`Expected Arc chain ID ${ARC_TESTNET_CHAIN_ID}`}>
-              <Wallet size={16} />
-              {isRestoringWallet ? "Checking wallet" : isWalletConnected && walletAddress ? shortAddress(walletAddress) : walletAddress ? `Reconnect ${shortAddress(walletAddress)}` : walletProviderAvailable ? "Connect wallet" : "No wallet"}
-            </button>
-            {walletAddress && (
-              <button className="button icon-button" onClick={disconnect} title="Disconnect wallet">
-                <LogOut size={16} />
+                <span>{walletButtonLabel}</span>
+                <ChevronDown className={isWalletMenuOpen ? "chevron open" : "chevron"} size={15} />
               </button>
-            )}
+              {isWalletMenuOpen && (
+                <div className="wallet-popover">
+                  <div className="wallet-popover-heading">
+                    <strong>Connect wallet</strong>
+                    <span>{walletOptions.length ? "Choose a provider" : "No provider detected"}</span>
+                  </div>
+                  <div className="wallet-options">
+                    {walletOptions.length ? (
+                      walletOptions.map((wallet) => {
+                        const isSelected = wallet.id === selectedWallet?.id;
+                        const isConnected = isSelected && isWalletConnected && Boolean(walletAddress);
+                        return (
+                          <button className={isConnected ? "wallet-option connected" : "wallet-option"} key={wallet.id} onClick={() => connect(wallet)}>
+                            <span className="wallet-option-main">
+                              <strong>{wallet.info.name}</strong>
+                              <span>{isConnected ? shortAddress(walletAddress) : isSelected ? "Selected" : "Available"}</span>
+                            </span>
+                            {isConnected ? <CheckCircle2 size={17} /> : <Wallet size={17} />}
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="wallet-empty">Install OKX Wallet, MetaMask, or another EIP-1193 wallet.</div>
+                    )}
+                  </div>
+                  {walletAddress && (
+                    <button className="wallet-disconnect" onClick={disconnect}>
+                      <LogOut size={16} />
+                      Disconnect wallet
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
@@ -521,7 +695,8 @@ export function App() {
                 <input value={createForm.metadataURI} onChange={(event) => setCreateForm({ ...createForm, metadataURI: event.target.value })} />
               </label>
             </div>
-            <button className="button wide" onClick={createJob} disabled={!canExecuteTransaction}>
+            {createBlocker && <div className="panel-hint">{createBlocker}</div>}
+            <button className="button wide" onClick={createJob} disabled={!canCreateJob} title={createBlocker || "Create and fund this job on Arc"}>
               <Play size={16} />
               Fund job on Arc
             </button>
@@ -537,7 +712,7 @@ export function App() {
             </div>
             <div className="timeline">
               {lifecycle.map((item, index) => (
-                <div className="timeline-row" key={item.title}>
+                <div className={activeLifecycleStep === item.title ? "timeline-row active" : "timeline-row"} key={item.title}>
                   <div className="timeline-icon">
                     <item.icon size={17} />
                   </div>
@@ -603,27 +778,41 @@ export function App() {
               </div>
               <ArrowRight size={22} />
             </div>
+            <div className="action-summary">
+              <div>
+                <span>Status</span>
+                <strong>{selectedJob?.status || "None"}</strong>
+              </div>
+              <div>
+                <span>Your role</span>
+                <strong>{selectedJobRole}</strong>
+              </div>
+              <div>
+                <span>Next</span>
+                <strong>{nextActionLabel}</strong>
+              </div>
+            </div>
             <Input label="Deliverable URI" value={actionForm.deliverableURI} onChange={(deliverableURI) => setActionForm({ ...actionForm, deliverableURI })} />
-            <button className="button secondary wide" onClick={() => execute("Submit deliverable", (contract) => contract.submitDeliverable(jobId, actionForm.deliverableURI))} disabled={!canExecuteTransaction}>
+            <button className="button secondary wide" onClick={() => execute("Submit deliverable", submitBlocker, (contract) => contract.submitDeliverable(jobId, actionForm.deliverableURI))} disabled={Boolean(submitBlocker)} title={submitBlocker || "Submit deliverable"}>
               <Send size={16} />
               Submit deliverable
             </button>
-            <button className="button wide" onClick={() => execute("Approve job", (contract) => contract.approveJob(jobId))} disabled={!canExecuteTransaction}>
+            <button className="button wide" onClick={() => execute("Approve job", approveBlocker, (contract) => contract.approveJob(jobId))} disabled={Boolean(approveBlocker)} title={approveBlocker || "Approve payout"}>
               <CheckCircle2 size={16} />
               Approve payout
             </button>
             <Input label="Dispute URI" value={actionForm.disputeURI} onChange={(disputeURI) => setActionForm({ ...actionForm, disputeURI })} />
-            <button className="button secondary wide" onClick={() => execute("Dispute job", (contract) => contract.disputeJob(jobId, actionForm.disputeURI))} disabled={!canExecuteTransaction}>
+            <button className="button secondary wide" onClick={() => execute("Dispute job", disputeBlocker, (contract) => contract.disputeJob(jobId, actionForm.disputeURI))} disabled={Boolean(disputeBlocker)} title={disputeBlocker || "Open dispute"}>
               <Gavel size={16} />
               Open dispute
             </button>
             <Input label="Resolution URI" value={actionForm.resolutionURI} onChange={(resolutionURI) => setActionForm({ ...actionForm, resolutionURI })} />
             <Input label="Agent split bps" value={actionForm.agentSplitBps} onChange={(agentSplitBps) => setActionForm({ ...actionForm, agentSplitBps })} />
-            <button className="button secondary wide" onClick={() => execute("Resolve dispute", (contract) => contract.resolveDispute(jobId, Number(actionForm.agentSplitBps), actionForm.resolutionURI))} disabled={!canExecuteTransaction}>
+            <button className="button secondary wide" onClick={() => execute("Resolve dispute", resolveBlocker, (contract) => contract.resolveDispute(jobId, Number(actionForm.agentSplitBps), actionForm.resolutionURI))} disabled={Boolean(resolveBlocker)} title={resolveBlocker || "Resolve split"}>
               <ShieldCheck size={16} />
               Resolve split
             </button>
-            <button className="button danger wide" onClick={() => execute("Refund expired job", (contract) => contract.refundUnsubmittedExpiredJob(jobId))} disabled={!canExecuteTransaction}>
+            <button className="button danger wide" onClick={() => execute("Refund expired job", refundBlocker, (contract) => contract.refundUnsubmittedExpiredJob(jobId))} disabled={Boolean(refundBlocker)} title={refundBlocker || "Refund expired"}>
               <AlertTriangle size={16} />
               Refund expired
             </button>

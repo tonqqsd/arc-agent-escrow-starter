@@ -5,7 +5,10 @@ import { ethers } from "ethers";
 import { ARC_TESTNET, formatNativeUsdc, requireArcTestnet } from "../src/arc.js";
 
 const PORT = Number(process.env.API_PORT || 8787);
-const MAX_BLOCK_RANGE = 9_500n;
+const MAX_BLOCK_RANGE = 9_000n;
+const BLOCK_WINDOW_OVERLAP = 500n;
+const MAX_LOG_WINDOWS = 60n;
+const MAX_SCAN_RANGE = MAX_BLOCK_RANGE * MAX_LOG_WINDOWS;
 
 const provider = new ethers.JsonRpcProvider(process.env.ARC_TESTNET_RPC_URL || ARC_TESTNET.rpcUrl);
 
@@ -19,6 +22,15 @@ const escrowAbi = [
 ] as const;
 
 const iface = new ethers.Interface(escrowAbi);
+const escrowEventNames = [
+  "JobCreated",
+  "DeliverableSubmitted",
+  "JobDisputed",
+  "JobApproved",
+  "JobRefunded",
+  "DisputeResolved"
+] as const;
+const escrowEventTopics = escrowEventNames.map((eventName) => iface.getEvent(eventName)!.topicHash);
 
 type ApiError = Error & { statusCode?: number };
 
@@ -64,24 +76,65 @@ async function getSafeBlockWindow(fromBlockParam: unknown) {
     requested = BigInt(requestedFromBlock.trim());
   }
 
-  const fromBlock = requested < 0n ? 0n : requested > latest ? latest : requested;
-  if (latest - fromBlock > MAX_BLOCK_RANGE) {
-    return { fromBlock: latest - MAX_BLOCK_RANGE, latest, clipped: true };
+  let fromBlock = requested < 0n ? 0n : requested > latest ? latest : requested;
+  let clipped = false;
+  if (latest - fromBlock > MAX_SCAN_RANGE) {
+    fromBlock = latest - MAX_SCAN_RANGE;
+    clipped = true;
   }
-  return { fromBlock, latest, clipped: false };
+  return { fromBlock, latest, clipped };
+}
+
+async function getPagedLogs(address: string, fromBlock: bigint, toBlock: bigint) {
+  const logs: ethers.Log[] = [];
+  const seenLogs = new Set<string>();
+  let cursor = fromBlock;
+
+  while (cursor <= toBlock) {
+    const queryFromBlock = cursor > BLOCK_WINDOW_OVERLAP ? cursor - BLOCK_WINDOW_OVERLAP : 0n;
+    const windowEnd = cursor + MAX_BLOCK_RANGE - 1n;
+    const currentToBlock = windowEnd > toBlock ? toBlock : windowEnd;
+    const windowLogs = await provider.getLogs({
+      address,
+      topics: [escrowEventTopics],
+      fromBlock: queryFromBlock,
+      toBlock: currentToBlock
+    });
+    for (const log of windowLogs) {
+      const logKey = `${log.transactionHash}:${log.index}`;
+      if (seenLogs.has(logKey)) continue;
+      seenLogs.add(logKey);
+      logs.push(log);
+    }
+    cursor = currentToBlock + 1n;
+  }
+
+  return logs;
 }
 
 async function fetchJobs(address: string, fromBlockParam: unknown) {
   const { fromBlock, latest, clipped } = await getSafeBlockWindow(fromBlockParam);
-  const logs = await provider.getLogs({
-    address,
-    fromBlock,
-    toBlock: latest
-  });
+  const logs = await getPagedLogs(address, fromBlock, latest);
 
   const jobs = new Map<string, IndexedJob>();
+  const pendingUpdates = new Map<string, Array<(job: IndexedJob) => void>>();
+  const sortedLogs = [...logs].sort((a, b) => {
+    if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+    return a.index - b.index;
+  });
 
-  for (const log of logs) {
+  function applyOrQueue(jobId: string, update: (job: IndexedJob) => void) {
+    const job = jobs.get(jobId);
+    if (job) {
+      update(job);
+      return;
+    }
+    const updates = pendingUpdates.get(jobId) || [];
+    updates.push(update);
+    pendingUpdates.set(jobId, updates);
+  }
+
+  for (const log of sortedLogs) {
     const parsed = iface.parseLog(log);
     if (!parsed) continue;
 
@@ -102,36 +155,53 @@ async function fetchJobs(address: string, fromBlockParam: unknown) {
         txHash: log.transactionHash,
         updatedTxHash: log.transactionHash
       });
+      const queuedUpdates = pendingUpdates.get(jobId) || [];
+      for (const update of queuedUpdates) update(jobs.get(jobId)!);
+      pendingUpdates.delete(jobId);
       continue;
     }
 
-    const job = jobs.get(jobId);
-    if (!job) continue;
-
     if (parsed.name === "DeliverableSubmitted") {
-      job.status = "Submitted";
-      job.deliverableURI = parsed.args.deliverableURI;
+      applyOrQueue(jobId, (job) => {
+        job.status = "Submitted";
+        job.deliverableURI = parsed.args.deliverableURI;
+        job.updatedTxHash = log.transactionHash;
+      });
+      continue;
     }
 
     if (parsed.name === "JobDisputed") {
-      job.status = "Disputed";
-      job.disputeURI = parsed.args.disputeURI;
+      applyOrQueue(jobId, (job) => {
+        job.status = "Disputed";
+        job.disputeURI = parsed.args.disputeURI;
+        job.updatedTxHash = log.transactionHash;
+      });
+      continue;
     }
 
     if (parsed.name === "JobApproved") {
-      job.status = "Released";
+      applyOrQueue(jobId, (job) => {
+        job.status = "Released";
+        job.updatedTxHash = log.transactionHash;
+      });
+      continue;
     }
 
     if (parsed.name === "JobRefunded") {
-      job.status = "Refunded";
+      applyOrQueue(jobId, (job) => {
+        job.status = "Refunded";
+        job.updatedTxHash = log.transactionHash;
+      });
+      continue;
     }
 
     if (parsed.name === "DisputeResolved") {
-      job.status = parsed.args.payerAmount > 0n ? "Refunded" : "Released";
-      job.resolutionURI = parsed.args.resolutionURI;
+      applyOrQueue(jobId, (job) => {
+        job.status = parsed.args.payerAmount > 0n ? "Refunded" : "Released";
+        job.resolutionURI = parsed.args.resolutionURI;
+        job.updatedTxHash = log.transactionHash;
+      });
     }
-
-    job.updatedTxHash = log.transactionHash;
   }
 
   return {
